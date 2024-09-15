@@ -35,7 +35,7 @@ look_for_string()
     num_of_instances=$(grep -rlI "$searchstr" $filesdir | wc -l)
     num_of_files=$(grep -rI "$searchstr" $filesdir | wc -l)
 
-    echo "The number of files is $num_of_files, and the number of matching lines is $num_of_instances."
+    echo "The number of files are $num_of_files and the number of matching lines are $num_of_instances"
 }
 
 
