@@ -1,6 +1,11 @@
 #include "systemcalls.h"
 #include <errno.h>
-
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <sys/wait.h>
 /**
  * @param cmd the command to execute with system()
  * @return true if the command in @param cmd was executed
@@ -23,7 +28,7 @@ bool do_system(const char *cmd)
 
     if (ret == -1)
     {
-        perror("Command was not able to execute error type:");
+        perror("Command was not able to execute error type, ERRNO:");
 
         return false;
     }
@@ -51,6 +56,7 @@ bool do_exec(int count, ...)
     va_start(args, count);
     char *command[count + 1];
     int i;
+
     for (i = 0; i < count; i++)
     {
         command[i] = va_arg(args, char *);
@@ -73,9 +79,51 @@ bool do_exec(int count, ...)
      *   as second argument to the execv() command.
      *
      */
+    pid_t pid = fork();
+    /* Parent process block */
+    if (pid < 0)
+    {
+        perror("Was not able to fork, ERRNO: ");
+        va_end(args);
 
+        return false;
+    }
+
+    /* Child process */
+    else if (pid == 0)
+    {
+        int ret = 0;
+        ret = execv(command[0], command);
+
+        if (ret == -1)
+        {
+            perror("Child process was not able to execute program, ERRNO: ");
+            exit(1);
+        }
+        exit(0);
+    }
+    /* Parent process */
+    else
+    {
+        int status = 0;
+        pid_t child_pid = wait(&status);
+
+        if (child_pid < 0)
+        {
+            perror("wait function failed ERRNO: ");
+            va_end(args);
+            return false;
+        }
+
+        if (status)
+        {
+            va_end(args);
+            return false;
+        }
+    }
+
+    printf("Succesfully executed the child proccess\n");
     va_end(args);
-
     return true;
 }
 
@@ -106,8 +154,66 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
      *   The rest of the behaviour is same as do_exec()
      *
      */
+    int fd = open(outputfile, O_RDWR);
+    if (fd == -1)
+    {
+        perror("Error opening file ERRNO: ");
+    }
 
+    pid_t pid = fork();
+    /* Parent process block */
+    if (pid < 0)
+    {
+        perror("Was not able to fork, ERRNO: ");
+        close(fd);
+        va_end(args);
+
+        return false;
+    }
+
+    /* Child process */
+    else if (pid == 0)
+    {
+        int ret = 0;
+        ret = dup2(fd, STDOUT_FILENO);
+        if (ret < 0)
+        {
+            close(fd);
+            perror("Failed to redirect to stdout ERRNO: ");
+            exit(1);
+        }
+        close(fd);
+
+        ret = execv(command[0], command);
+        if (ret == -1)
+        {
+            perror("Child process was not able to execute program, ERRNO: ");
+            exit(1);
+        }
+
+        exit(0);
+    }
+    /* Parent process */
+    else
+    {
+        int status = 0;
+        pid_t child_pid = wait(&status);
+
+        if (child_pid < 0)
+        {
+            perror("wait function failed ERRNO: ");
+            va_end(args);
+            return false;
+        }
+
+        if (status)
+        {
+            va_end(args);
+            return false;
+        }
+    }
+
+    printf("Succesfully executed the child proccess\n");
     va_end(args);
-
     return true;
 }
