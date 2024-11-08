@@ -13,7 +13,7 @@ all: $(APP)
 default: $(APP)
 
 # Compile the application
-$(APP): writer.c
+$(APP): aesdsocket.c
 	$(CC) $(CLFAGS) -o $(APP) aesdsocket.c
 
 # Clean target to remove the compiled file
