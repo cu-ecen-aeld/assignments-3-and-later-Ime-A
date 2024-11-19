@@ -10,22 +10,149 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/queue.h>
+#include <pthread.h>
+#include <time.h>
 
 #define BACKLOG 10
 #define MYPORT "9000"
 #define BUFFER_LENGTH 1024
 
-bool caught_sigint = false;
-bool caught_sigterm = false;
+volatile sig_atomic_t caught_signal = false;
+pthread_mutex_t mutex_file = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex_list = PTHREAD_MUTEX_INITIALIZER;
+
+struct Node 
+{
+    int con_sockfd;
+    pthread_t thread_id;
+    SLIST_ENTRY(Node) entries;
+
+};
+
+
+SLIST_HEAD(slisthead, Node); // Define the head type
+struct slisthead head = SLIST_HEAD_INITIALIZER(head); // Declare and initialize the list head
 
 void signal_handler(int signal_number)
 {
     if (signal_number == SIGINT || signal_number == SIGTERM)
     {
-        syslog(LOG_INFO, "Caught signal, exiting");
-        caught_sigint = (signal_number == SIGINT);
-        caught_sigterm = (signal_number == SIGTERM);
+        caught_signal = true;
+
     }
+}
+
+void *handle_time(void *args)
+{
+    char buffer[156];
+    time_t rawtime;
+    struct tm *timeinfo;
+    char* timestamp = "timestamp:";
+
+    strncpy(buffer, timestamp, strlen(timestamp));
+    buffer[strlen(timestamp)] = '\0';
+    int start_point = strlen(timestamp);
+
+    if (start_point >= sizeof(buffer)) {
+        syslog(LOG_ERR, "Buffer size too small for timestamp prefix.");
+        return NULL;
+    }
+
+
+    while(!caught_signal)
+    {
+        for (int i = 0; i < 100; i++) 
+        { // 100 x 100ms = 10 seconds
+            if (caught_signal) return NULL;
+                usleep(100000); // Sleep for 100ms
+        }   
+
+        time(&rawtime);
+        timeinfo = localtime(&rawtime);
+
+        // Format the date and time into the buffer
+        if (strftime(&buffer[start_point], sizeof(buffer) - start_point, "%a, %d %b %Y %H:%M:%S %z", timeinfo) == 0) {
+            syslog(LOG_ERR,"Buffer size is too small.\n");
+            return NULL;
+        }
+        int str_len = strlen(buffer);
+        
+
+        int fd = open("/var/tmp/aesdsocketdata", O_WRONLY | O_APPEND | O_CREAT, 0644);
+        if (fd == -1) {
+            syslog(LOG_ERR, "File open failed.");         
+            return NULL;
+        }
+
+        pthread_mutex_lock(&mutex_file);
+        if (write(fd, buffer, str_len) == -1 || write(fd, "\n", 1) == -1) {
+            syslog(LOG_ERR, "Write to file failed.");
+            pthread_mutex_unlock(&mutex_file);
+            close(fd);
+            return NULL;
+        }
+        pthread_mutex_unlock(&mutex_file);
+        close(fd);
+
+    }
+
+    return NULL;
+}
+
+void * handle_connection(void* args)
+{
+    char buffer[BUFFER_LENGTH];
+    struct Node *client = (struct Node *)args;
+    int con_sockfd = client->con_sockfd;
+    
+    int fd = open("/var/tmp/aesdsocketdata", O_WRONLY | O_APPEND | O_CREAT, 0644);
+    if (fd == -1) {
+        syslog(LOG_ERR, "File open failed.");
+        close(con_sockfd);
+        
+        return NULL;
+    }
+
+    pthread_mutex_lock(&mutex_file);
+    ssize_t bytes_received;
+    while ((bytes_received = recv(con_sockfd, buffer, BUFFER_LENGTH, 0)) > 0) {
+        char *newline_pos = strchr(buffer, '\n');
+        ssize_t write_size = newline_pos ? newline_pos - buffer + 1 : bytes_received;
+        if (write(fd, buffer, write_size) == -1) {
+            syslog(LOG_ERR, "Write to file failed.");
+            break;
+        }
+        if (newline_pos) break;
+    }
+    pthread_mutex_unlock(&mutex_file);
+    close(fd);
+
+    fd = open("/var/tmp/aesdsocketdata", O_RDONLY);
+    if (fd == -1) {
+        syslog(LOG_ERR, "File read failed.");
+        close(con_sockfd);
+        
+        return NULL;
+    }
+
+    ssize_t bytes_read;
+    while ((bytes_read = read(fd, buffer, BUFFER_LENGTH)) > 0) {
+        if (send(con_sockfd, buffer, bytes_read, 0) == -1) {
+            syslog(LOG_ERR, "Send to client failed.");
+            break;
+        }
+    }
+
+    close(fd);
+    close(con_sockfd);
+
+    pthread_mutex_lock(&mutex_list);
+    SLIST_REMOVE(&head, client, Node, entries);
+    pthread_mutex_unlock(&mutex_list);
+
+    return NULL;
+
 }
 
 int main(int argc, char** argv)
@@ -71,7 +198,7 @@ int main(int argc, char** argv)
         return -1;
     }
 
-        // Set SO_REUSEADDR option
+    // Set SO_REUSEADDR option
     int optval = 1;
     if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) {
         syslog(LOG_ERR, "setsockopt(SO_REUSEADDR) failed.");
@@ -117,10 +244,20 @@ int main(int argc, char** argv)
         close(STDERR_FILENO);
     }
 
-    while (!caught_sigint && !caught_sigterm) {
-        listen(sockfd, BACKLOG);
-        syslog(LOG_INFO, "Listening on port %s...", MYPORT);
+    listen(sockfd, BACKLOG);
+    syslog(LOG_INFO, "Listening on port %s...", MYPORT);
 
+    pthread_t timer_thread;
+    if(pthread_create(&timer_thread, NULL, handle_time, NULL) != 0)
+    {
+        syslog(LOG_ERR, "Could not start timer thread.");
+        close(sockfd);
+        return -1;
+    }
+
+    while (!caught_signal) 
+    {
+        
         con_sockfd = accept(sockfd, (struct sockaddr *)&client_addr, &addr_size);
         if (con_sockfd < 0) {
             syslog(LOG_ERR, "Accept failed.");
@@ -129,44 +266,48 @@ int main(int argc, char** argv)
 
         if (getnameinfo((struct sockaddr *)&client_addr, addr_size, client_ip, sizeof(client_ip), NULL, 0, NI_NUMERICHOST) == 0)
             syslog(LOG_INFO, "Accepted connection from %s", client_ip);
+        
 
-        int fd = open("/var/tmp/aesdsocketdata", O_WRONLY | O_APPEND | O_CREAT, 0644);
-        if (fd == -1) {
-            syslog(LOG_ERR, "File open failed.");
+        // Create Node for linked list.
+        struct Node * tmp = malloc(sizeof(struct Node));
+        memset(tmp , 0, sizeof(struct Node));
+        tmp->con_sockfd = con_sockfd;
+
+        //Start thread.
+        pthread_t thread;
+        if(pthread_create(&thread, NULL, handle_connection, tmp) != 0)
+        {
+            free(tmp);
             close(con_sockfd);
             continue;
         }
+        tmp->thread_id = thread;
 
-        ssize_t bytes_received;
-        while ((bytes_received = recv(con_sockfd, buffer, BUFFER_LENGTH, 0)) > 0) {
-            char *newline_pos = strchr(buffer, '\n');
-            ssize_t write_size = newline_pos ? newline_pos - buffer + 1 : bytes_received;
-            if (write(fd, buffer, write_size) == -1) {
-                syslog(LOG_ERR, "Write to file failed.");
-                break;
-            }
-            if (newline_pos) break;
-        }
-        close(fd);
+        // Insert node into the linked list.
+        pthread_mutex_lock(&mutex_list);
+        SLIST_INSERT_HEAD(&head, tmp, entries);
+        pthread_mutex_unlock(&mutex_list);
 
-        fd = open("/var/tmp/aesdsocketdata", O_RDONLY);
-        if (fd == -1) {
-            syslog(LOG_ERR, "File read failed.");
-            close(con_sockfd);
-            continue;
-        }
-
-        ssize_t bytes_read;
-        while ((bytes_read = read(fd, buffer, BUFFER_LENGTH)) > 0) {
-            if (send(con_sockfd, buffer, bytes_read, 0) == -1) {
-                syslog(LOG_ERR, "Send to client failed.");
-                break;
-            }
-        }
-        close(fd);
-        close(con_sockfd);
-        syslog(LOG_INFO, "Closed connection from %s", client_ip);
     }
+
+    syslog(LOG_INFO, "Caught signal, exiting");
+
+    struct Node *tdata;
+    SLIST_FOREACH(tdata, &head, entries) {
+        pthread_join(tdata->thread_id, NULL);
+        free(tdata);
+    }
+
+    pthread_join(timer_thread, NULL);
+    /*
+    struct Node *tdata, *tmp;
+    SLIST_FOREACH_SAFE(tdata, &head, entries, tmp) 
+    {
+        pthread_join(tdata->thread_id, NULL);
+        SLIST_REMOVE(&head, tdata, Node, entries);
+        free(tdata);
+    }
+    */
 
     close(sockfd);
     remove("/var/tmp/aesdsocketdata");
