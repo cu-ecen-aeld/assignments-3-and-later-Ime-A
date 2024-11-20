@@ -2,7 +2,7 @@
 APP = aesdsocket
 
 # Check if CROSS_COMPILE is set, otherwise default to an empty value
-CC = $(CROSS_COMPILE)gcc
+#CC = $(CROSS_COMPILE)gcc
 
 # Compilation flags
 CFLAGS += -Wall -Werror
@@ -10,6 +10,8 @@ CFLAGS += -Wall -Werror
 FILE_PATH = "/var/tmp/aesdsocketdata"
 
 # Define the target
+# Define the default target
+.PHONY: all clean
 all: $(APP)
 
 default: $(APP)
