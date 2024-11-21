@@ -19,7 +19,7 @@ default: $(APP)
 
 # Compile the application
 $(APP): aesdsocket.c
-	$(CC) $(CLFAGS) -o $(APP) aesdsocket.c
+	$(CC) $(CFLAGS) -o $(APP) aesdsocket.c $(LDFLAGS)
 
 # Clean target to remove the compiled file
 clean:
