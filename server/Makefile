@@ -2,11 +2,11 @@
 APP = aesdsocket
 
 # Check if CROSS_COMPILE is set, otherwise default to an empty value
-#CC = $(CROSS_COMPILE)gcc
+CC ?= $(CROSS_COMPILE)gcc
 # Linker flags (set externally by Yocto)
-LDFLAGS ?=
+LDFLAGS ?= -lpthread -lrt
 # Compilation flags
-CFLAGS += -Wall -Werror
+CFLAGS ?= -g -Wall -Werror
 
 FILE_PATH = "/var/tmp/aesdsocketdata"
 
