@@ -299,15 +299,6 @@ int main(int argc, char** argv)
     }
 
     pthread_join(timer_thread, NULL);
-    /*
-    struct Node *tdata, *tmp;
-    SLIST_FOREACH_SAFE(tdata, &head, entries, tmp) 
-    {
-        pthread_join(tdata->thread_id, NULL);
-        SLIST_REMOVE(&head, tdata, Node, entries);
-        free(tdata);
-    }
-    */
 
     close(sockfd);
     remove("/var/tmp/aesdsocketdata");
