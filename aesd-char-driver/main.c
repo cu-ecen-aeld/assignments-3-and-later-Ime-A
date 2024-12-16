@@ -26,13 +26,17 @@ MODULE_AUTHOR("Ime Asamudo"); /** TODO: fill in your name **/
 MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
-
+/**
+ * TODO: handle open
+*/ 
 int aesd_open(struct inode *inode, struct file *filp)
 {
     PDEBUG("open");
-    /**
-     * TODO: handle open
-     */
+
+    struct aesd_dev *dev;
+
+    dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
+    filp->private_data = dev;
     
     return 0; 
 }
@@ -94,7 +98,6 @@ static int aesd_setup_cdev(struct aesd_dev *dev)
 void aesd_cleanup_module(void)
 {
     dev_t devno = MKDEV(aesd_major, aesd_minor);
-    struct aesd_circular_buffer *buffer_ptr;
 
     cdev_del(&aesd_device.cdev);
     unregister_chrdev_region(devno, 1);
