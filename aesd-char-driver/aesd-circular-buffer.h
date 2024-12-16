@@ -29,14 +29,7 @@ struct aesd_buffer_entry
      */
     size_t size;
 };
-//tmp = buffer->in_offs
-// tmp_size += buffer->entry[tmp].size 
-// if tmp_size > char_offs
-//   entr_ptr =  &buffer->entry[tmp]
-//   byte_ptr = buffer->entry[tmp].buffptr
-// tmp++
-//if buffer->entry[tmp].size > char_offs
-// tmp++
+
 struct aesd_circular_buffer
 {
     /**

@@ -17,11 +17,12 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
+#include <linux/slab.h>
 #include "aesdchar.h"
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
-MODULE_AUTHOR("Your Name Here"); /** TODO: fill in your name **/
+MODULE_AUTHOR("Ime Asamudo"); /** TODO: fill in your name **/
 MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
@@ -32,7 +33,8 @@ int aesd_open(struct inode *inode, struct file *filp)
     /**
      * TODO: handle open
      */
-    return 0;
+    
+    return 0; 
 }
 
 int aesd_release(struct inode *inode, struct file *filp)
@@ -86,49 +88,88 @@ static int aesd_setup_cdev(struct aesd_dev *dev)
     }
     return err;
 }
+/**
+ * TODO: cleanup AESD specific poritions here as necessary
+ */
+void aesd_cleanup_module(void)
+{
+    dev_t devno = MKDEV(aesd_major, aesd_minor);
+    struct aesd_circular_buffer *buffer_ptr;
+
+    cdev_del(&aesd_device.cdev);
+    unregister_chrdev_region(devno, 1);
+
+    if(aesd_device.buffer != NULL)
+    {
+        int i = 0;
+        for(i = 0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++)
+        {
+            if(aesd_device.buffer->entry[i].buffptr != NULL)
+            {
+                kfree(aesd_device.buffer->entry[i].buffptr);
+            }
+        }
+        kfree(aesd_device.buffer);
+    }
+    
+    printk(KERN_ALERT "Goodbye from aesd char device\n");
+    return;
+}
 
 
 
+/**
+ * TODO: initialize the AESD specific portion of the device
+ */
 int aesd_init_module(void)
 {
     dev_t dev = 0;
     int result;
-    result = alloc_chrdev_region(&dev, aesd_minor, 1,
-            "aesdchar");
-    aesd_major = MAJOR(dev);
-    if (result < 0) {
+    /*Staticly setting major and minor numbers.
+    Assume aesd_major and minor have already been set
+    And just assigns them to dev
+    reserves a range of character device numbers*/
+    if(aesd_major)
+    {
+       dev = MKDEV(aesd_major, aesd_minor);
+       result = register_chrdev_region(dev, 1, "aesdchar");
+    }
+   /*Dynamically set a major and minor number for character device*/
+   else
+    {
+        result = alloc_chrdev_region(&dev, aesd_minor, 1, "aesdchar");
+        aesd_major = MAJOR(dev);
+    }
+    if (result < 0) 
+    {
         printk(KERN_WARNING "Can't get major %d\n", aesd_major);
         return result;
     }
+
     memset(&aesd_device,0,sizeof(struct aesd_dev));
+    aesd_device.buffer = kmalloc(sizeof(struct aesd_circular_buffer), GFP_KERNEL);
+    if(!aesd_device.buffer)
+    {
+        result = -ENOMEM;
+        goto fail;
 
-    /**
-     * TODO: initialize the AESD specific portion of the device
-     */
-
-    result = aesd_setup_cdev(&aesd_device);
-
-    if( result ) {
-        unregister_chrdev_region(dev, 1);
     }
+    aesd_circular_buffer_init(aesd_device.buffer);
+    mutex_init(&aesd_device.lock);
+    result = aesd_setup_cdev(&aesd_device);
+    if( result != 0 ) {
+       // unregister_chrdev_region(dev, 1);
+        aesd_cleanup_module();
+    }
+
+    printk(KERN_ALERT "Hello from aesd char device\n");
+    return result;
+
+fail:
+    aesd_cleanup_module();
     return result;
 
 }
-
-void aesd_cleanup_module(void)
-{
-    dev_t devno = MKDEV(aesd_major, aesd_minor);
-
-    cdev_del(&aesd_device.cdev);
-
-    /**
-     * TODO: cleanup AESD specific poritions here as necessary
-     */
-
-    unregister_chrdev_region(devno, 1);
-}
-
-
 
 module_init(aesd_init_module);
 module_exit(aesd_cleanup_module);
