@@ -18,6 +18,7 @@
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
 #include <linux/slab.h>
+#include <linux/uaccess.h>
 #include "aesdchar.h"
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
@@ -47,13 +48,14 @@ int aesd_release(struct inode *inode, struct file *filp)
     /**
      * TODO: handle release
      */
+    /*
     struct aesd_dev *dev = (struct aesd_dev *)filp->private_data;
     if(dev->buffer)
     {
         kfree(dev->buffer);
         dev->buffer = NULL;
     }
-    
+   */ 
     return 0;
 }
 
@@ -61,7 +63,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = 0;
-    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
+    PDEBUG("read %zu bytes with offset %lld",count, *f_pos);
     /**
      * TODO: handle read
      */
@@ -72,10 +74,10 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 
 
     mutex_lock_interruptible(&dev->lock);
-    entry = aesd_circular_buffer_find_entry_offset_for_fpos(dev->buffer, (size_t)f_pos, &char_offset); 
+    entry = aesd_circular_buffer_find_entry_offset_for_fpos(dev->buffer, *f_pos, &char_offset); 
     if(!entry)
     {
-        retval = -EFAULT;
+        retval = 0;
         goto out;
     }
 
