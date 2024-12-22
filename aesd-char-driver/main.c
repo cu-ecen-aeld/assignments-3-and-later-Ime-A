@@ -47,6 +47,13 @@ int aesd_release(struct inode *inode, struct file *filp)
     /**
      * TODO: handle release
      */
+    struct aesd_dev *dev = (struct aesd_dev *)filp->private_data;
+    if(dev->buffer)
+    {
+        kfree(dev->buffer);
+        dev->buffer = NULL;
+    }
+    
     return 0;
 }
 
@@ -58,6 +65,34 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     /**
      * TODO: handle read
      */
+    struct aesd_dev *dev = (struct aesd_dev *)filp->private_data;
+    struct aesd_buffer_entry *entry;
+    size_t char_offset;
+    size_t bytes_to_read = count;
+
+
+    mutex_lock_interruptible(&dev->lock);
+    entry = aesd_circular_buffer_find_entry_offset_for_fpos(dev->buffer, (size_t)f_pos, &char_offset); 
+    if(!entry)
+    {
+        retval = -EFAULT;
+        goto out;
+    }
+
+    if(entry->size - char_offset < bytes_to_read)
+       bytes_to_read = entry->size - char_offset;
+
+    if(copy_to_user(buf, entry->buffptr + char_offset, bytes_to_read))
+    {
+        retval = -EFAULT;
+        goto out;   
+    }
+
+    *f_pos += bytes_to_read;
+    retval = bytes_to_read;
+
+    out:    
+    mutex_unlock(&dev->lock);
     return retval;
 }
 
@@ -69,8 +104,30 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     /**
      * TODO: handle write
      */
+    struct aesd_dev *dev = (struct aesd_dev *)filp->private_data;
+    struct aesd_buffer_entry entry;
+
+    entry.buffptr = kmalloc(count, GFP_KERNEL);
+
+    if(copy_from_user(entry.buffptr, buf, count))
+    {
+        kfree(entry.buffptr);
+        retval = -EFAULT;
+        goto out;
+    }
+    entry.size  = count;
+
+    mutex_lock_interruptible(&dev->lock);
+    aesd_circular_buffer_add_entry(dev->buffer, &entry);
+    mutex_unlock(&dev->lock);
+
+    *f_pos += count;
+    retval = count;
+
+   out: 
     return retval;
 }
+
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
@@ -113,6 +170,7 @@ void aesd_cleanup_module(void)
             }
         }
         kfree(aesd_device.buffer);
+        aesd_device.buffer = NULL;
     }
     
     printk(KERN_ALERT "Goodbye from aesd char device\n");
