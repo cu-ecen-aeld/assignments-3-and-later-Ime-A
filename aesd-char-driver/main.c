@@ -19,6 +19,7 @@
 #include <linux/fs.h> // file_operations
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/string.h>
 #include "aesdchar.h"
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
@@ -27,9 +28,31 @@ MODULE_AUTHOR("Ime Asamudo"); /** TODO: fill in your name **/
 MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
-/**
- * TODO: handle open
-*/ 
+struct aesd_tmp_buffer data_stream;
+
+
+int add_to_tmp_buffer(struct aesd_tmp_buffer *tmp_buffer, char *string, size_t str_len)
+{
+    PDEBUG("Appending to dynamic buffer");
+
+    char *new_data;
+    new_data = krealloc(tmp_buffer->data, tmp_buffer->size + str_len + 1, GFP_KERNEL);
+    if(!new_data)
+    {
+        return -ENOMEM;
+    }
+    PDEBUG("Memory was allocated.");
+    tmp_buffer->data = new_data;
+
+    memcpy(tmp_buffer->data + tmp_buffer->size , string, str_len);
+    tmp_buffer->size += str_len;
+    tmp_buffer->data[tmp_buffer->size] = '\0';
+
+    PDEBUG("String added : %s", tmp_buffer->data);
+
+    return 0;
+}
+
 int aesd_open(struct inode *inode, struct file *filp)
 {
     PDEBUG("open");
@@ -48,14 +71,6 @@ int aesd_release(struct inode *inode, struct file *filp)
     /**
      * TODO: handle release
      */
-    /*
-    struct aesd_dev *dev = (struct aesd_dev *)filp->private_data;
-    if(dev->buffer)
-    {
-        kfree(dev->buffer);
-        dev->buffer = NULL;
-    }
-   */ 
     return 0;
 }
 
@@ -101,33 +116,84 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
-    ssize_t retval = -ENOMEM;
+    ssize_t retval = 0;
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle write
-     */
+
     struct aesd_dev *dev = (struct aesd_dev *)filp->private_data;
     struct aesd_buffer_entry entry;
+    char *string = kmalloc(count, GFP_KERNEL);
 
-    entry.buffptr = kmalloc(count, GFP_KERNEL);
-
-    if(copy_from_user(entry.buffptr, buf, count))
+    if(!string)
     {
-        kfree(entry.buffptr);
+        retval = -ENOMEM;
+        goto out;
+    }
+
+    if(copy_from_user(string, buf, count))
+    {
+        kfree(string);
         retval = -EFAULT;
         goto out;
     }
-    entry.size  = count;
 
-    mutex_lock_interruptible(&dev->lock);
-    aesd_circular_buffer_add_entry(dev->buffer, &entry);
-    mutex_unlock(&dev->lock);
+    
+    if(add_to_tmp_buffer(&data_stream, string, count) < 0)
+    {
+        kfree(string);
+        retval = -ENOMEM;
+        goto out;
+    }
+    kfree(string);
 
-    *f_pos += count;
-    retval = count;
+
+    while(data_stream.size > 1)
+    {
+        char *newline_pos = memchr(data_stream.data, '\n', data_stream.size);
+        if(!newline_pos)
+        {
+            retval = data_stream.size;
+            break;
+        }
+
+        size_t entry_size = newline_pos - data_stream.data + 1; 
+
+        entry.buffptr = kmalloc(entry_size, GFP_KERNEL);
+        if(!entry.buffptr)
+        {
+            retval = -ENOMEM;
+            break;
+        }
+
+        memcpy(entry.buffptr, data_stream.data, entry_size);
+        entry.size = entry_size;
+
+        memmove(data_stream.data, data_stream.data + entry_size, data_stream.size - entry_size);
+        data_stream.size -= entry_size;
+
+        if(mutex_lock_interruptible(&dev->lock))
+        {
+            kfree(entry.buffptr);
+            retval = -ERESTARTSYS;
+            break;
+        }
+
+        aesd_circular_buffer_add_entry(dev->buffer, &entry);
+        mutex_unlock(&dev->lock);
+
+
+        *f_pos += entry.size;
+        retval += entry.size;
+    }
+
+    if (data_stream.size == 1) 
+    {
+        kfree(data_stream.data);
+        data_stream.data = NULL;
+        data_stream.size = 0;
+    }
 
    out: 
-    return retval;
+   return retval;
 }
 
 struct file_operations aesd_fops = {
@@ -173,6 +239,13 @@ void aesd_cleanup_module(void)
         }
         kfree(aesd_device.buffer);
         aesd_device.buffer = NULL;
+    }
+
+    if(data_stream.data != NULL)
+    {
+        kfree(data_stream.data);
+        data_stream.data = NULL;
+        data_stream.size = 0;
     }
     
     printk(KERN_ALERT "Goodbye from aesd char device\n");
@@ -225,6 +298,8 @@ int aesd_init_module(void)
         aesd_cleanup_module();
     }
 
+    data_stream.data = NULL;
+    data_stream.size = 0;
     printk(KERN_ALERT "Hello from aesd char device\n");
     return result;
 

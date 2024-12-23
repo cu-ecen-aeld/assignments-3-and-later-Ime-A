@@ -32,6 +32,9 @@ struct aesd_dev
     struct mutex lock;
     struct cdev cdev;     /* Char device structure      */
 };
-
-
+struct aesd_tmp_buffer
+{
+     char *data;
+     size_t size;
+};
 #endif /* AESD_CHAR_DRIVER_AESDCHAR_H_ */
