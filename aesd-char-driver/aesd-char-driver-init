@@ -1,0 +1,32 @@
+#!/bin/sh
+
+case "$1" in
+start)
+    echo "Starting init script for loading aesdchar module"
+    if start-stop-daemon -S -x /usr/bin/aesdchar_load; then
+        echo "aesdchar module loaded successfully"
+    else
+        echo "Failed to start aesdchar module" >&2
+        exit 1
+    fi
+    ;;
+stop)
+    echo "Removing user modules"
+    if start-stop-daemon -K -x /usr/bin/aesdchar_load; then
+        echo "aesdchar module process stopped"
+    else
+        echo "Failed to stop aesdchar module" >&2
+    fi
+    if start-stop-daemon -S -x /usr/bin/aesdchar_unload; then
+        echo "aesdchar module unloaded"
+    else
+        echo "Failed to unload aesdchar module" >&2
+        exit 1
+    fi
+    ;;
+*)
+    echo "Usage: $0 {start|stop}" >&2
+    exit 1
+    ;;
+esac
+exit 0
