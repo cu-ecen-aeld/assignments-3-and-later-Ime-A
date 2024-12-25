@@ -8,7 +8,6 @@ LDFLAGS ?= -lpthread -lrt
 # Compilation flags
 CFLAGS ?= -g -Wall -Werror
 
-FILE_PATH = "/var/tmp/aesdsocketdata"
 
 # Define the target
 # Define the default target
@@ -24,4 +23,3 @@ $(APP): aesdsocket.c
 # Clean target to remove the compiled file
 clean:
 	rm -f $(APP)
-	rm -f $(FILE_PATH) 

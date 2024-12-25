@@ -18,6 +18,8 @@
 #define MYPORT "9000"
 #define BUFFER_LENGTH 1024
 
+#define AESD_CHAR_DRIVER "/dev/aesdchar"
+
 volatile sig_atomic_t caught_signal = false;
 pthread_mutex_t mutex_file = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_list = PTHREAD_MUTEX_INITIALIZER;
@@ -79,14 +81,14 @@ void *handle_time(void *args)
         int str_len = strlen(buffer);
         
 
-        int fd = open("/var/tmp/aesdsocketdata", O_WRONLY | O_APPEND | O_CREAT, 0644);
-        if (fd == -1) {
+        int fd = open(AESD_CHAR_DRIVER, O_WRONLY);
+        if (fd < 0) {
             syslog(LOG_ERR, "File open failed.");         
             return NULL;
         }
 
         pthread_mutex_lock(&mutex_file);
-        if (write(fd, buffer, str_len) == -1 || write(fd, "\n", 1) == -1) {
+        if (write(fd, buffer, str_len) < 0 || write(fd, "\n", 1) < 0) {
             syslog(LOG_ERR, "Write to file failed.");
             pthread_mutex_unlock(&mutex_file);
             close(fd);
@@ -106,8 +108,8 @@ void * handle_connection(void* args)
     struct Node *client = (struct Node *)args;
     int con_sockfd = client->con_sockfd;
     
-    int fd = open("/var/tmp/aesdsocketdata", O_WRONLY | O_APPEND | O_CREAT, 0644);
-    if (fd == -1) {
+    int fd = open(AESD_CHAR_DRIVER, O_WRONLY);
+    if (fd < 0) {
         syslog(LOG_ERR, "File open failed.");
         close(con_sockfd);
         
@@ -119,7 +121,7 @@ void * handle_connection(void* args)
     while ((bytes_received = recv(con_sockfd, buffer, BUFFER_LENGTH, 0)) > 0) {
         char *newline_pos = strchr(buffer, '\n');
         ssize_t write_size = newline_pos ? newline_pos - buffer + 1 : bytes_received;
-        if (write(fd, buffer, write_size) == -1) {
+        if (write(fd, buffer, write_size) < 0) {
             syslog(LOG_ERR, "Write to file failed.");
             break;
         }
@@ -128,8 +130,8 @@ void * handle_connection(void* args)
     pthread_mutex_unlock(&mutex_file);
     close(fd);
 
-    fd = open("/var/tmp/aesdsocketdata", O_RDONLY);
-    if (fd == -1) {
+    fd = open(AESD_CHAR_DRIVER, O_RDONLY);
+    if (fd < 0) {
         syslog(LOG_ERR, "File read failed.");
         close(con_sockfd);
         
@@ -177,7 +179,7 @@ int main(int argc, char** argv)
 
     int sockfd, con_sockfd;
     char client_ip[BUFFER_LENGTH];
-    char buffer[BUFFER_LENGTH];
+//    char buffer[BUFFER_LENGTH];
     struct addrinfo hints = {0}, *res = NULL;
     struct sockaddr_storage client_addr;
     socklen_t addr_size = sizeof(client_addr);
@@ -247,6 +249,7 @@ int main(int argc, char** argv)
     listen(sockfd, BACKLOG);
     syslog(LOG_INFO, "Listening on port %s...", MYPORT);
 
+    /*
     pthread_t timer_thread;
     if(pthread_create(&timer_thread, NULL, handle_time, NULL) != 0)
     {
@@ -254,7 +257,7 @@ int main(int argc, char** argv)
         close(sockfd);
         return -1;
     }
-
+    */
     while (!caught_signal) 
     {
         
@@ -298,10 +301,9 @@ int main(int argc, char** argv)
         free(tdata);
     }
 
-    pthread_join(timer_thread, NULL);
+    //pthread_join(timer_thread, NULL);
 
     close(sockfd);
-    remove("/var/tmp/aesdsocketdata");
     closelog();
     return 0;
 }
