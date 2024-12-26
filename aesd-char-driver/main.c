@@ -146,7 +146,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     kfree(string);
 
 
-    while(data_stream.size > 1)
+    while(data_stream.size > 0)
     {
         char *newline_pos = memchr(data_stream.data, '\n', data_stream.size);
         if(!newline_pos)
@@ -190,13 +190,14 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         retval += entry.size;
     }
 
+    /*
     if (data_stream.size == 1) 
     {
         kfree(data_stream.data);
         data_stream.data = NULL;
         data_stream.size = 0;
     }
-
+    */
    out: 
    return retval;
 }
