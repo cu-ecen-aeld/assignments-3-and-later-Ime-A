@@ -209,7 +209,7 @@ loff_t aesd_llseek(struct file *filp, loff_t off, int whence)
             break;
 
         case SEEK_CUR:
-            newpos = filp + off;
+            newpos = filp->f_pos + off;
             break;
 
         case SEEK_END:
@@ -225,7 +225,6 @@ loff_t aesd_llseek(struct file *filp, loff_t off, int whence)
         
 	filp->f_pos = newpos;
 	return newpos;
-
 
 }
 
@@ -255,8 +254,9 @@ int aesd_adjust_file_offset(struct file *filp, uint32_t write_cmd, uint32_t writ
 
     int pos = 0;
     int index = 0;
+    int i;
 
-    for(int i = 0; i <= write_cmd; i++)
+    for(i = 0; i <= write_cmd; i++)
     {   
         index = (tmp_off + i) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
         if(index ==  tmp_write_cmd)
@@ -277,16 +277,17 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     int retval = 0;
 
-    if (_IOC_TYPE(cmd) != AESD_IOC_MAGIC)
+    if(_IOC_TYPE(cmd) != AESD_IOC_MAGIC)
         return -ENOTTY;
 
-	if (_IOC_NR(cmd) > AESDCHAR_IOC_MAXNR)
+	if(_IOC_NR(cmd) > AESDCHAR_IOC_MAXNR)
         return -ENOTTY;
+    
+    struct aesd_seekto seekto;
 
     switch (cmd)
     {
         case AESDCHAR_IOCSEEKTO:
-            struct aesd_seekto seekto;
             if(copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)) != 0) {
                 retval = -EFAULT;
             } else {
