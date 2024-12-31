@@ -238,19 +238,28 @@ int aesd_adjust_file_offset(struct file *filp, uint32_t write_cmd, uint32_t writ
     int tmp_off = dev->buffer->out_offs;
     int tmp_in = dev->buffer->in_offs;
 
-    if (write_cmd > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
-        return -EINVAL;
 
-    if(tmp_off > tmp_in)
+    if (write_cmd > AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)
+    {
+        PDEBUG("write_cmd too big. %d", write_cmd);
+        return -EINVAL;
+    }
+
+    if(tmp_off >= tmp_in)
         tmp_in += AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
 
     if(write_cmd > tmp_in - tmp_off)
+    {
+        PDEBUG("write_cmd %d is larger than number of writes. %d", write_cmd, (tmp_in - tmp_off));
         return -EINVAL;
-    
+    }
     int tmp_write_cmd = (write_cmd + tmp_off) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
     
     if(write_cmd_offset > dev->buffer->entry[tmp_write_cmd].size)
+    {
+        PDEBUG("offset %d is larger than the size of string in buffer %d", write_cmd_offset, dev->buffer->entry[tmp_write_cmd].size);
         return -EINVAL;
+    }
 
     int pos = 0;
     int index = 0;
@@ -261,7 +270,7 @@ int aesd_adjust_file_offset(struct file *filp, uint32_t write_cmd, uint32_t writ
         index = (tmp_off + i) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
         if(index ==  tmp_write_cmd)
         {
-            pos = write_cmd_offset;
+            pos += write_cmd_offset;
             break;
         }       
        pos += dev->buffer->entry[index].size;  
@@ -297,6 +306,7 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         default:
             return -ENOTTY;
     }
+
     return retval;
 }
 

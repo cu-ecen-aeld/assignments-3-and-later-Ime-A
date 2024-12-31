@@ -13,12 +13,15 @@
 #include <sys/queue.h>
 #include <pthread.h>
 #include <time.h>
+#include "aesd_ioctl.h"
 
-#define BACKLOG 10
+#define BACKLOG 20
 #define MYPORT "9000"
 #define BUFFER_LENGTH 1024
 
 #define AESD_CHAR_DRIVER "/dev/aesdchar"
+
+const char * aesdioctl_cmd = "AESDCHAR_IOCSEEKTO";
 
 volatile sig_atomic_t caught_signal = false;
 pthread_mutex_t mutex_file = PTHREAD_MUTEX_INITIALIZER;
@@ -108,47 +111,102 @@ void * handle_connection(void* args)
     struct Node *client = (struct Node *)args;
     int con_sockfd = client->con_sockfd;
     
-    int fd = open(AESD_CHAR_DRIVER, O_WRONLY);
-    if (fd < 0) {
+    pthread_mutex_lock(&mutex_file);
+    int fd = open(AESD_CHAR_DRIVER, O_RDWR);
+    if(fd < 0) 
+    {
         syslog(LOG_ERR, "File open failed.");
         close(con_sockfd);
         
         return NULL;
     }
-
-    pthread_mutex_lock(&mutex_file);
     ssize_t bytes_received;
-    while ((bytes_received = recv(con_sockfd, buffer, BUFFER_LENGTH, 0)) > 0) {
+    while ((bytes_received = recv(con_sockfd, buffer, BUFFER_LENGTH, 0)) > 0) 
+    {
+        buffer[bytes_received] = '\0';
+
         char *newline_pos = strchr(buffer, '\n');
         ssize_t write_size = newline_pos ? newline_pos - buffer + 1 : bytes_received;
-        if (write(fd, buffer, write_size) < 0) {
+
+        if(strncmp(buffer, aesdioctl_cmd, strlen(aesdioctl_cmd)) == 0)
+        {
+            char *ioctl_stream = malloc(write_size + 1);
+            if (!ioctl_stream) {
+                syslog(LOG_ERR, "Memory allocation failed.");
+                break;
+            }
+
+            memcpy(ioctl_stream, buffer, write_size);
+            ioctl_stream[write_size] = '\0'; // Null-terminate ioctl_stream
+            
+            struct aesd_seekto seekto = {0};
+
+            if(sscanf(ioctl_stream, "AESDCHAR_IOCSEEKTO:%u,%u", &seekto.write_cmd, &seekto.write_cmd_offset) < 2)
+            {
+                free(ioctl_stream);
+                syslog(LOG_ERR, "Could not extract write_cmd and write_cmd_offset.");
+                goto close;
+
+            }
+
+            free(ioctl_stream);
+            syslog(LOG_INFO, "write_cmd %u write_cmd_offset %u", seekto.write_cmd, seekto.write_cmd_offset);
+
+            if(ioctl(fd, AESDCHAR_IOCSEEKTO, &seekto) < 0)
+            {
+                syslog(LOG_ERR, "ioctl failed: %s", strerror(errno));
+                goto close;
+            }
+
+            ssize_t bytes_read;
+            while ((bytes_read = read(fd, buffer, BUFFER_LENGTH)) > 0) 
+            {
+                if (send(con_sockfd, buffer, bytes_read, 0) == -1) 
+                {
+                    syslog(LOG_ERR, "Send to client failed.");
+                    break;
+                }
+            }
+            goto close;
+        }
+
+        if(write(fd, buffer, write_size) < 0) 
+        {
             syslog(LOG_ERR, "Write to file failed.");
             break;
         }
-        if (newline_pos) break;
+        if(newline_pos) 
+            break;
     }
-    pthread_mutex_unlock(&mutex_file);
     close(fd);
+    pthread_mutex_unlock(&mutex_file);
 
+    pthread_mutex_lock(&mutex_file);
     fd = open(AESD_CHAR_DRIVER, O_RDONLY);
-    if (fd < 0) {
+    if (fd < 0) 
+    {
         syslog(LOG_ERR, "File read failed.");
         close(con_sockfd);
-        
+        pthread_mutex_unlock(&mutex_file);
+
         return NULL;
     }
 
     ssize_t bytes_read;
-    while ((bytes_read = read(fd, buffer, BUFFER_LENGTH)) > 0) {
-        if (send(con_sockfd, buffer, bytes_read, 0) == -1) {
+    while ((bytes_read = read(fd, buffer, BUFFER_LENGTH)) > 0) 
+    {
+        if (send(con_sockfd, buffer, bytes_read, 0) == -1) 
+        {
             syslog(LOG_ERR, "Send to client failed.");
             break;
         }
     }
 
+close:
     close(fd);
-    close(con_sockfd);
+    pthread_mutex_unlock(&mutex_file);
 
+    close(con_sockfd);
     pthread_mutex_lock(&mutex_list);
     SLIST_REMOVE(&head, client, Node, entries);
     pthread_mutex_unlock(&mutex_list);
